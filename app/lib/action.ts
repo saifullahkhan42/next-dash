@@ -14,15 +14,44 @@ const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
 const FormSchema = z.object({
     id: z.string(),
-    customerId: z.string(),
-    amount: z.coerce.number(), //The amount field is specifically set to coerce (change) from a string to a number while also validating its type.
-    status: z.enum(['pending', 'paid']),
+    customerId: z.string({
+        invalid_type_error: 'Please select a customer',
+    }),
+    amount: z.coerce
+    .number()
+    .gt(0, {message: "Please enter the amount greater than $0."}), //The amount field is specifically set to coerce (change) from a string to a number while also validating its type.
+    status: z.enum(['pending', 'paid'], {
+        invalid_type_error: 'Please select an Invoice status',
+    }),
     date: z.string(),
 })
 
 const CreateInvoice = FormSchema.omit({ id: true, date: true});
 
-export async function createInvoice(formData: FormData) {
+export type State = {
+    errors?: {
+        customerId?: string[];
+        amount?: string[];
+        status?: string[];  
+    };
+    message?: string | null;
+}
+
+export async function createInvoice( prevState: State, formData: FormData) {
+    // validate the form data
+    const validatedFeilds = CreateInvoice.safeParse({
+        customerId: formData.get('customerId'),
+        amount: formData.get('amount'),
+        status: formData.get('status'),
+    });
+
+    //If the form data is invalid, you can return an error message to the user:
+    if(!validatedFeilds.success) {
+        return {
+            errors: validatedFeilds.error.flatten().fieldErrors,
+            message: 'Missing feilds. Failed to create invoice',
+        };
+    }
     
     //You can then pass your rawFormData to CreateInvoice to validate the types:
     const {customerId, amount, status} = CreateInvoice.parse({
@@ -43,11 +72,15 @@ export async function createInvoice(formData: FormData) {
     const date = new Date().toISOString().split('T')[0]; // Correct way to extract YYYY-MM-DD
 
     //inserting data into your database
-    await sql`
-        INSERT INTO invoices (customer_id, amount, status, date)
-        VALUES (${customerId}, ${amountInCents}, ${status}, ${date})
-    `;       
-
+    try {
+        await sql`
+            INSERT INTO invoices (customer_id, amount, status, date)
+            VALUES (${customerId}, ${amountInCents}, ${status}, ${date})
+        `;
+    } catch (error) {
+        console.error('Failed to insert data:', error);        
+    }       
+    //revalidate the cache for the invoice page and redirect the user.
     revalidatePath('/dashboard/invoices'); //This will revalidate the /dashboard/invoices page after the form is submitted.
     redirect('/dashboard/invoices'); //This will redirect the user to the /dashboard/invoices page after the form is submitted.
 
@@ -64,11 +97,15 @@ export async function updateInvoice(id: string, formData: FormData){
 
     const amountInCents = amount * 100;
 
-    await sql`
-        UPDATE invoices
-        SET customer_id = ${customerId}, amount = ${amountInCents}, status = ${status}
-        WHERE id = ${id}
-    `;
+    try {
+        await sql`
+            UPDATE invoices
+            SET customer_id = ${customerId}, amount = ${amountInCents}, status = ${status}
+            WHERE id = ${id}
+        `;
+    } catch (error) {
+        console.error('Failed to update data:', error);
+    }
     revalidatePath('/dashboard/invoices');
     redirect('/dashboard/invoices');
 }
@@ -76,9 +113,13 @@ export async function updateInvoice(id: string, formData: FormData){
 
 // delete invoice for specific invoice id
 export async function deleteInvoice(id: string){
-    await sql`
-        DELETE FROM invoices
-        WHERE id = ${id}
-    `;
+    try {
+        await sql`
+            DELETE FROM invoices
+            WHERE id = ${id}
+        `;
+    } catch (error) {
+        console.error('Failed to delete data:', error);        
+    }
     revalidatePath('/dashboard/invoices');
 };
